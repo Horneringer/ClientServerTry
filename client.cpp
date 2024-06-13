@@ -1,109 +1,126 @@
-#include <iostream>
-#include <sys/socket.h>
-#include <stdio.h>
-#include <netinet/in.h>
-#include <unistd.h>
 #include <cstring>
+#include <iostream>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <thread>
 #include <time.h>
+#include <unistd.h>
+#include <vector>
 
 /*КЛИЕНТ*/
 
 //макрос обработки ошибок. Выводит сообщение об ошибке и завершает программу
 #define handle_error(msg) \
-    do { perror(msg); exit(EXIT_FAILURE); } while (0)
+ do                       \
+ {                        \
+  perror(msg);            \
+  exit(EXIT_FAILURE);     \
+ }                        \
+ while (0)
 
-const char* getCurrentDateTime() 
+const char* getCurrentDateTime()
 {
-    static char formattedDateTime[35]; // Статическая переменная для хранения результата
-    struct timespec currentTimeSpec;
-    clock_gettime(CLOCK_REALTIME, &currentTimeSpec);
+	static char
+					formattedDateTime[35]; // Статическая переменная для хранения результата
+	struct timespec currentTimeSpec;
+	clock_gettime(CLOCK_REALTIME, &currentTimeSpec);
 
-    // Преобразование времени в строку
-    struct tm localTime;
-    localtime_r(&currentTimeSpec.tv_sec, &localTime);
-    strftime(formattedDateTime, sizeof(formattedDateTime), "%Y-%m-%d %H:%M:%S", &localTime);
+	// Преобразование времени в строку
+	struct tm localTime;
+	localtime_r(&currentTimeSpec.tv_sec, &localTime);
+	strftime(formattedDateTime,
+			 sizeof(formattedDateTime),
+			 "%Y-%m-%d %H:%M:%S ",
+			 &localTime);
 
-    // Добавление миллисекунд к строке времени
-    snprintf(formattedDateTime + 19, sizeof(formattedDateTime) - 19, ".%03ld", currentTimeSpec.tv_nsec / 1000000);
+	// Добавление миллисекунд к строке времени
+	snprintf(formattedDateTime + 19,
+			 sizeof(formattedDateTime) - 19,
+			 ".%03ld",
+			 currentTimeSpec.tv_nsec / 1000000);
 
-    return formattedDateTime;
+	return formattedDateTime;
 }
 
-int main()
+void client_task(const std::string& clientName,
+				 const std::string& port,
+				 const std::string& timeout)
 {
-    const char* curTime = getCurrentDateTime();
-    char Buffer[1024];
-    memset(Buffer, 0, sizeof(Buffer));
-    //получение имени клиента, порта и периода подключения из консоли
-    std::string clientName;
-    std::string port;
-    std::string timeout;
-    
-    std::cout << "Введите имя клиента" << "\n";
-    getline(std::cin, clientName);
+	//текущая дата
+	const char* curTime = getCurrentDateTime();
 
-    std::cout << "Введите порт" << "\n";
+	//буфер для соотщений
+	char   Buffer[1024];
+	size_t bufferSize = sizeof(Buffer);
 
-    getline(std::cin, port);
+	memset(Buffer, 0, sizeof(Buffer));
 
-    std::cout << "Введите период подключения" << "\n";
-    getline(std::cin, timeout);
+	//структура таймаута для сокета
+	struct timeval tv;
+	tv.tv_sec  = stoi(timeout);
+	tv.tv_usec = 0;
 
-    //структура таймаута для сокета
-    struct timeval tv;
-    tv.tv_sec = stoi(timeout);
-    tv.tv_usec = 0;
+	//структура для хранения адреса, к которому присоединяемся
+	struct sockaddr_in addr;
+	addr.sin_family = AF_INET;
+	addr.sin_port	= htons(stoi(port));
 
-    //структура для хранения адреса, к которому присоединяемся
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(stoi(port));
+	//подключаемся к адресу хоста
+	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
-    //подключаемся к адресу хоста
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	//создание сокета клиента
+	int cfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (cfd == -1)
+		handle_error("socket");
 
-    //создание сокета клиента   
-    int cfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (cfd == -1)
-        handle_error("socket");
+	//подключение к серверу
+	if (connect(cfd, (sockaddr*)&addr, sizeof(addr)) == -1)
+		handle_error("connect");
 
-    //установка таймаута для клиентского сокета, 
-    //т.е. сколько он будет ждать ответа от сервера перед повтором попытки
-    if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
-        handle_error("setsockopt");
-    if (setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0)
-        handle_error("setsockopt");
+	//добавление в буфер текущего времени и даты
+	std::strncat(Buffer, curTime, strlen(curTime));
+	//добавление в буфер введённого имя клиента
+	std::strncat(Buffer, clientName.c_str(), sizeof(clientName));
+	//добавление в буфер периода подключения
+	std::strncat(Buffer, timeout.c_str(), sizeof(timeout));
 
-    //подключение к серверу
-    if(connect(cfd,(sockaddr *)&addr, sizeof(addr)) == -1)
-        handle_error("connect");
+	//отправляем сообщение
+	if (send(cfd, Buffer, bufferSize, MSG_NOSIGNAL) == -1)
+		handle_error("send");
 
-    size_t bufferSize = sizeof(Buffer);
+	shutdown(cfd, SHUT_RDWR);
+	close(cfd);
+}
 
+int main(int argc, char* argv[])
+{
+	if (argc < 4)
+	{
+		std::cerr << "Usage: " << argv[0]
+				  << " < clientName > < port > < timeout>\n";
+		return 1;
+	}
 
-    //добавление в буфер текущего времени и даты
-    std::strncat(Buffer, curTime, strlen(curTime));
-    //добавление в буфер введённого имя клиента
-    std::strncat(Buffer, clientName.c_str(), sizeof(clientName));
-    //добавление в буфер периода подключения
-    std::strncat(Buffer, timeout.c_str(), sizeof(timeout));
+	std::string clientName = argv[1];
+	std::string port	   = argv[2];
+	std::string timeout	   = argv[3];
 
-    //отправляем сообщение 
-    if(send(cfd, Buffer, bufferSize, MSG_NOSIGNAL) == -1)
-        handle_error("send");
+	std::vector<std::thread> threads;
 
-    size_t recvSize = recv(cfd, Buffer, strlen(Buffer), MSG_NOSIGNAL);
+	//запуск клиентского кода в 10 потоках
+	for (int i = 0; i < 10; ++i)
+	{
+		clientName += std::to_string(i);
+		threads.emplace_back(client_task, clientName, port, timeout);
 
-    if (recvSize > 0)
-        std::cout << "Data = " << Buffer << "\n";
-    else if (recvSize == 0)
-        std::cout << "Server closed";
-    else
-       handle_error("recv"); 
-     
+		//задержка в 5 секунд между запусками клиентов
+		std::this_thread::sleep_for(std::chrono::seconds(stoi(timeout)));
+		clientName.erase(clientName.end() - 1);
+	}
 
-    shutdown(cfd, SHUT_RDWR);
-    close(cfd);
-    
-    return 0;
+	for (auto& thread : threads)
+		thread.join();
+
+	return 0;
 }

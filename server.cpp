@@ -1,11 +1,17 @@
-#include <iostream>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <stdio.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <string>
+//для буфера
+#include <event2/buffer.h>
+//для структуры, отслеживающей события
+#include <event2/bufferevent.h>
+//для слушателя со стороны сервера
+#include <event2/listener.h>
 #include <fstream>
+#include <iostream>
+#include <stdio.h>
+#include <string>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 //для структур IPv4 и IPv6
 #include <netinet/in.h>
@@ -14,111 +20,188 @@
 
 //макрос обработки ошибок. Выводит сообщение об ошибке и завершает программу
 #define handle_error(msg) \
-    do { perror(msg); exit(EXIT_FAILURE); } while (0)
+ do                       \
+ {                        \
+  perror(msg);            \
+  exit(EXIT_FAILURE);     \
+ }                        \
+ while (0)
+
+//коллбэк на чтение
+void read_cb(struct bufferevent* bev, void* arg)
+{
+	//достаём буферы входа/выхода из bufferevent
+	struct evbuffer* input	= bufferevent_get_input(bev);
+	struct evbuffer* output = bufferevent_get_output(bev);
+
+	//получение текущей длины буфера
+	size_t lenght = evbuffer_get_length(input);
+
+	//выделение памяти для данных
+	char* data = (char*)malloc(lenght + 1);
+	if (!data)
+	{
+		perror("malloc");
+		return;
+	}
+
+	//копирование данных из буфера в выделенный массив
+	evbuffer_copyout(input, data, lenght);
+
+	data[lenght] = '\0';
+
+	std::ofstream logFile;
+
+	//открытие файла на запись и дозапись после каждого входящего соединения
+	logFile.open("log.txt", std::ios::out | std::ios::app);
+	if (!logFile.is_open())
+	{
+		perror("Error open!");
+		free(data);
+		return;
+	}
+
+	logFile << data << "\n";
+
+	logFile.close();
+
+	std::cout << "Data: " << data << "\n";
+
+	//перекидываем из одного буфера в другой
+	evbuffer_add_buffer(output, input);
+
+	//освобождение памяти
+	free(data);
+}
+
+//коллбэк на запись
+void event_cb(struct bufferevent* bev, short events, void* arg)
+{
+	//если произошла ошибка в событии буфера
+	if (events & BEV_EVENT_ERROR)
+	{
+		std::perror("Error");
+		//освобождение буфера событий
+		bufferevent_free(bev);
+	}
+
+	//если данные передоваемые или принимаемые через событие закончились
+	if (events & BEV_EVENT_EOF)
+		bufferevent_free(bev);
+}
+
+/*
+коллбэк на приём соединения
+
+слушатель
+серверный дескриптор
+адрес серверного сокета
+размер адреса
+доп аргумент
+*/
+void accept_conn_cb(struct evconnlistener* listener,
+					evutil_socket_t		   sfd,
+					sockaddr*			   addr,
+					int					   sockleln,
+					void*				   arg)
+{
+	//указатель на базу, связанную со слушателем
+	struct event_base* base = evconnlistener_get_base(listener);
+
+	//указатель на буфер событий
+	// флаг закрытия bufferevent после его освобождения
+	struct bufferevent* bev =
+	  bufferevent_socket_new(base, sfd, BEV_OPT_CLOSE_ON_FREE);
+
+	//установка коллбэков на буфер событий
+	bufferevent_setcb(bev, read_cb, nullptr, event_cb, nullptr);
+
+	//регистрация событий для bufferevent
+	bufferevent_enable(bev, EV_READ | EV_WRITE);
+}
+
+//коллбэк на случай ошибки
+void accept_error_cb(struct evconnlistener* listener, void* arg)
+{
+	//указатель на базу, связанную со слушателем
+	struct event_base* base = evconnlistener_get_base(listener);
+
+	//код ошибки сокета
+	int err = EVUTIL_SOCKET_ERROR();
+
+	fprintf(stderr, "Socket error: %s\n", evutil_socket_error_to_string(err));
+
+	//завершения работы базы событий
+	event_base_loopexit(base, nullptr);
+}
 
 int main()
 {
-    //получение порта из консоли
-    std::string port;
-    //дескриптор сокета сервера
-    int sfd;
-    std::cout << "Введите порт" << "\n";
+	//создание базы событий
+	struct event_base* base = event_base_new();
 
-    getline(std::cin, port);
-    
-    //структура для хранения адреса серверного сокета
-    struct sockaddr_in addr;
+	//дескриптор сокета сервера
+	int sfd;
 
-    //семейство доменов 
-    addr.sin_family = AF_INET;
-    //htons используются для преобразования числовых значений из порядка байтов хоста(little-endian) в порядок байтов сети(big-endian)
-    addr.sin_port = htons(stoi(port));
-    //ip адрес; INADDR_ANY - все доступные адреса; INADDR_LOOPBACK - ip хоста 127.0.0.1
-    //htonl используется для приведения ip адреса к сетевому виду 
-    addr.sin_addr.s_addr = htonl(INADDR_ANY); //0.0.0.0
+	//получение порта из консоли
+	std::string port;
+	std::cout << "Введите порт"
+			  << "\n";
 
-    //структура для хранения адреса клиентского сокета
-    struct sockaddr_in peer_addr;
-    //размер структуры адреса клиентского сокета
-    socklen_t peer_addr_size = sizeof(peer_addr);
+	getline(std::cin, port);
 
-    //создание сокета    
-    sfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	//структура для хранения адреса серверного сокета
+	struct sockaddr_in addr;
+	memset(&addr, 0, sizeof(addr));
 
-    //проверка, что он создался успешно
-    if (sfd == -1)
-        handle_error("socket"); 
+	//семейство доменов
+	addr.sin_family = AF_INET;
 
-    //разрешить повторное использование адреса и порта
-    int optval = 1;
-    setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+	// htons используются для преобразования числовых значений из порядка байтов
+	// хоста(little-endian) в порядок байтов сети(big-endian)
+	addr.sin_port = htons(stoi(port));
 
-    //привязка сокета к определённому адресу и порту
+	// ip адрес; INADDR_ANY - все доступные адреса; INADDR_LOOPBACK - ip хоста
+	// 127.0.0.1 htonl используется для приведения ip адреса к сетевому виду
+	addr.sin_addr.s_addr = htonl(INADDR_ANY); // 0.0.0.0
 
-    //принимает: 
-    //  дескриптор серверного сокета, 
-    //  указатель на структуру адреса сокета, 
-    //  размер структуры адреса
-    if (bind(sfd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
-        handle_error("bind");
+	//структура для хранения адреса клиентского сокета
+	struct sockaddr_in peer_addr;
 
-    //перевода сокета в режим пассивного ожидания входящих соединений
-    //можно использовать константу SOMAXCON, которая хранит максимально возможную длину очереди подключений для текущей ОС(остальным будет отказано в подключении) 
-    if (listen(sfd, SOMAXCONN) == -1)
-        handle_error("listen");
+	//размер структуры адреса клиентского сокета
+	socklen_t peer_addr_size = sizeof(peer_addr);
 
-        //буфер для чтнеи/записи данных
-        char Buffer[1024];
+	//создание объекта слушателя
 
-        std::ofstream logFile;
+	/*
+	база событий
+	коллбэк, срабатывающий на новое подключение
+	доп аргумент, передаваемый в коллбэк
+	флаги:
+	LEV_OPT_CLOSE_ON_FREE - закрывает сокет после особождении связанного события
+	LEV_OPT_REUSEABLE - сокет может быть повторно использован после его закрытия
+	размер очереди подключений
+	структура адреса серверного сокета
+	размер структуры адреса
+	*/
+	struct evconnlistener* listener =
+	  evconnlistener_new_bind(base,
+							  accept_conn_cb,
+							  nullptr,
+							  LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE,
+							  -1,
+							  (sockaddr*)&addr,
+							  sizeof(addr));
 
-    while(1)
-    {
-        //принятия входящих соединений на сервере; блокируется и ожидает, пока клиент не попытается установить соединение с сервером
-        //принимает: 
-        //  серверный дескриптор
-        //  указатель на структуру адреса клиентского сокета
-        //  указатель на размер структуры адреса клиентского сокета
-        //возвращает:
-        //  новый дескриптор для общения с клиентом; создаётся в неблокируемом режиме
-        int cfd = accept4(sfd, (struct sockaddr *)&peer_addr, &peer_addr_size, SOCK_NONBLOCK);
-        if (cfd == -1)
-            handle_error("accept4");
+	//установка коллбэка для обработки ошибок
+	evconnlistener_set_error_cb(listener, accept_error_cb);
 
-        //сервер засыпает на 10 секунд для проверки работы таймаута
-        sleep(10);
-        
-        //обнуление буфера
-        memset(Buffer, 0, sizeof(Buffer));
+	//запуск цикла событий
+	event_base_dispatch(base);
 
-        //для сокета  в неблокирующем режиме осуществляется проверка в цикле
-        //если данные ещё не пришли(recv == -1)
-        ssize_t numBytes;
-        while ((numBytes = recv(cfd, Buffer, sizeof(Buffer) - 1, MSG_NOSIGNAL)) == -1)
-        {
-             //и errno содержит EAGAIN
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-            {
-                //то спим 20 секунд, затем повторяем итерацию
-                usleep(200000);
-                continue;
-            }
-            else
-                //иначе обработчик ошибок закрывает соединение 
-                handle_error("recv");
-        }
-             
-        // shutdown(cfd, SHUT_RDWR);
-        // close(cfd);
+	//освобождение ресурсов
+	evconnlistener_free(listener);
+	event_base_free(base);
 
-        //открытие файла на запись и дозапись после каждого входящего соединения
-        logFile.open("log.txt", std::ios::out | std::ios::app);
-        if (!logFile.is_open())
-            return 1;
-
-        logFile << Buffer << "\n";
-
-        logFile.close();
-    }
-    return 0;    
+	return 0;
 }

@@ -1,0 +1,192 @@
+# For clang-format 14.0.0
+# https://releases.llvm.org/14.0.0/tools/clang/docs/ClangFormatStyleOptions.html
+
+# Базовый стиль
+BasedOnStyle: Microsoft
+
+Standard: c++17
+
+# Отступ перед public и тп
+AccessModifierOffset: -4
+
+# Выровнен ли код в круглых скобках, которые не закрыты (начало и конец круглых скобок не в одной строке)
+AlignAfterOpenBracket: Align
+
+# Выравнивание списка инициализации массива
+AlignArrayOfStructures: Right
+
+# Выравнивания обявлений, макросов и тп
+AlignConsecutiveAssignments: AcrossComments
+AlignConsecutiveBitFields: AcrossComments
+AlignConsecutiveDeclarations: AcrossComments
+AlignConsecutiveMacros: AcrossComments
+
+# Параметры выравнивания обратной косой черты в экранированных новых строках
+AlignEscapedNewlines: Left
+
+# Выравнивание операторов двоичных и тернарных выражений
+AlignOperands: AlignAfterOperator
+
+# Выравнивание однострочных комментариев
+AlignTrailingComments: true
+
+# Перенос строк с аргументами при вызове функции
+AllowAllArgumentsOnNextLine: false
+
+# Форматирование коротких строк
+AllowShortBlocksOnASingleLine: Empty
+
+# Разрешение коротких строк в switch и тп
+AllowShortCaseLabelsOnASingleLine: false
+
+# Короткие enum
+AllowShortEnumsOnASingleLine: false
+
+# Короткие функции
+AllowShortFunctionsOnASingleLine: Empty
+
+# Короткие if
+AllowShortIfStatementsOnASingleLine: Never
+
+# Короткие lambda
+AllowShortLambdasOnASingleLine: All
+
+#while в одну строку
+AllowShortLoopsOnASingleLine: false
+
+# Новая строка после возвращаемого типа
+AlwaysBreakAfterReturnType: None
+
+# Перенос при многостроковой инициализации
+AlwaysBreakBeforeMultilineStrings: true
+
+# Форматирование template
+AlwaysBreakTemplateDeclarations: Yes
+
+# Возможно будет полезно в qt
+# AttributeMacros: ['__capability', '__output', '__ununsed']
+
+# Форматирование аргументов
+BinPackArguments: false
+BinPackParameters: false
+
+# битовые операции
+BitFieldColonSpacing: Both
+
+# Форматирование фигурных скобок
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: true
+  AfterClass: true
+  AfterControlStatement: Always #!!!
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: true
+  AfterUnion: true
+  AfterExternBlock: true
+  BeforeCatch: true
+  BeforeElse: true
+  BeforeLambdaBody: false
+  BeforeWhile: true
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+
+# Перенос бмнарных операторов
+BreakBeforeBinaryOperators: NonAssignment
+
+# BreakBeforeConceptDeclarations: false
+
+BreakBeforeTernaryOperators: true
+
+# Конструктор инициализации
+BreakConstructorInitializers: BeforeColon
+BreakInheritanceList: BeforeColon
+
+# Разрешить разбиение строковых литералов при форматировании
+BreakStringLiterals: true
+
+# Максимальная ширина строки
+ColumnLimit: 80
+
+CompactNamespaces: false
+
+#################!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 2
+#################!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+# Автоматические выравнивания по файлу. Сомнительно
+# Cpp11BracedListStyle: false
+# DeriveLineEnding: true
+# vDerivePointerAlignment: true
+
+# Пустые строки рядом с модификатором доступа
+EmptyLineAfterAccessModifier: Always
+EmptyLineBeforeAccessModifier: Always
+
+FixNamespaceComments: true
+
+# Группировкка инклюдов
+IncludeBlocks: Regroup
+
+# Отступ у модификаторов доступа
+IndentAccessModifiers: false
+
+IndentCaseBlocks: false
+IndentCaseLabels: true
+
+IndentPPDirectives: AfterHash
+PPIndentWidth: 1
+#  Ширина отступа
+IndentWidth: 4
+
+IndentWrappedFunctionNames: true
+
+KeepEmptyLinesAtTheStartOfBlocks: false
+
+#  Оставьте несколько пустых строк подряд
+MaxEmptyLinesToKeep: 1
+
+NamespaceIndentation: Inner
+
+PackConstructorInitializers: Never
+
+#Какая сторона указателя рядом с
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# переработка комментариев
+ReflowComments: true
+
+# Удаление лишних фигурных скобок!!!!!
+RemoveBracesLLVM: true
+
+# Блоки отступа в группах
+SeparateDefinitionBlocks: Always
+
+ShortNamespaceLines: 0
+
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceAfterTemplateKeyword: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCaseColon: false
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeParens: ControlStatements #! Можно сделать кастомным
+SpacesInSquareBrackets: false
+# !!Макросы, которые игнорируются перед оператором, как если бы они были
+# атрибутом. Чтобы они не анализировались как
+# идентификатор, например, для Qts emit.
+StatementAttributeLikeMacros: [emit]
+
+# !!!!!!
+# StatementMacros: true
+
+#  ширина вкладки клавиатуры
+TabWidth: 4
+UseTab: Always
