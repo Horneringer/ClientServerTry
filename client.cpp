@@ -1,6 +1,7 @@
 #include <cstring>
 #include <iostream>
 #include <netinet/in.h>
+#include <sstream>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <thread>
@@ -51,7 +52,7 @@ void client_task(const std::string& clientName,
 	const char* curTime = getCurrentDateTime();
 
 	//буфер для соотщений
-	char   Buffer[1024];
+	char   Buffer[4096];
 	size_t bufferSize = sizeof(Buffer);
 
 	memset(Buffer, 0, sizeof(Buffer));
@@ -78,12 +79,18 @@ void client_task(const std::string& clientName,
 	if (connect(cfd, (sockaddr*)&addr, sizeof(addr)) == -1)
 		handle_error("connect");
 
-	//добавление в буфер текущего времени и даты
-	std::strncat(Buffer, curTime, strlen(curTime));
-	//добавление в буфер введённого имя клиента
-	std::strncat(Buffer, clientName.c_str(), sizeof(clientName));
-	//добавление в буфер периода подключения
-	std::strncat(Buffer, timeout.c_str(), sizeof(timeout));
+	std::ostringstream oss;
+	oss << "[" << curTime << "]"
+		<< " " << clientName << " " << stoi(timeout);
+	std::string message = oss.str();
+
+	//добавление в буфер текущего времени и даты, имени и таймаута
+	std::strncat(Buffer, message.c_str(), message.size());
+	// std::strncat(Buffer, curTime, strlen(curTime));
+	// //добавление в буфер введённого имя клиента
+	// std::strncat(Buffer, clientName.c_str(), sizeof(clientName));
+	// //добавление в буфер периода подключения
+	// std::strncat(Buffer, timeout.c_str(), sizeof(timeout));
 
 	//отправляем сообщение
 	if (send(cfd, Buffer, bufferSize, MSG_NOSIGNAL) == -1)
