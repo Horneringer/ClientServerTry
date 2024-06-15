@@ -96,9 +96,6 @@ void client_task(const std::string& clientName,
 	if (send(cfd, Buffer, bufferSize, MSG_NOSIGNAL) == -1)
 		handle_error("send");
 
-	// Имитация работы клиента
-	// std::this_thread::sleep_for(std::chrono::seconds(std::stoi(timeout)));
-
 	shutdown(cfd, SHUT_RDWR);
 	close(cfd);
 }
