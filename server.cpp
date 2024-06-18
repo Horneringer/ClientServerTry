@@ -1,124 +1,160 @@
+#include <boost/asio.hpp>
+#include <boost/bind/bind.hpp>
 #include <iostream>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <stdio.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <string>
-#include <fstream>
 
-//для структур IPv4 и IPv6
-#include <netinet/in.h>
+/*Клиент-сервер c использованием библиотеки boost::asio*/
 
-/*СЕРВЕР*/
+//импорт пространства имён
+using boost::asio::ip::tcp;
 
-//макрос обработки ошибок. Выводит сообщение об ошибке и завершает программу
-#define handle_error(msg) \
-    do { perror(msg); exit(EXIT_FAILURE); } while (0)
-
-int main()
+//класс, отвечающий за одно соединение клиента с сервером
+class Session
 {
-    //получение порта из консоли
-    std::string port;
-    //дескриптор сокета сервера
-    int sfd;
-    std::cout << "Введите порт" << "\n";
+private:
 
-    getline(std::cin, port);
-    
-    //структура для хранения адреса серверного сокета
-    struct sockaddr_in addr;
+	//сокет
+	tcp::socket sfd;
 
-    //семейство доменов 
-    addr.sin_family = AF_INET;
-    //htons используются для преобразования числовых значений из порядка байтов хоста(little-endian) в порядок байтов сети(big-endian)
-    addr.sin_port = htons(stoi(port));
-    //ip адрес; INADDR_ANY - все доступные адреса; INADDR_LOOPBACK - ip хоста 127.0.0.1
-    //htonl используется для приведения ip адреса к сетевому виду 
-    addr.sin_addr.s_addr = htonl(INADDR_ANY); //0.0.0.0
+	enum
+	{
+		max_length = 1024
+	};
 
-    //структура для хранения адреса клиентского сокета
-    struct sockaddr_in peer_addr;
-    //размер структуры адреса клиентского сокета
-    socklen_t peer_addr_size = sizeof(peer_addr);
+	//буфер для работы с данными
+	char data[max_length];
 
-    //создание сокета    
-    sfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+public:
 
-    //проверка, что он создался успешно
-    if (sfd == -1)
-        handle_error("socket"); 
+	//конструктор принимает сервис ввода-вывода(аналог база событий в libevent)
+	Session(boost::asio::io_service& io_service)
+		: sfd(io_service)
+	{}
 
-    //разрешить повторное использование адреса и порта
-    int optval = 1;
-    setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+	~Session() {}
 
-    //привязка сокета к определённому адресу и порту
+	//функция возвращающая сокет
+	tcp::socket& socket()
+	{
+		return sfd;
+	}
 
-    //принимает: 
-    //  дескриптор серверного сокета, 
-    //  указатель на структуру адреса сокета, 
-    //  размер структуры адреса
-    if (bind(sfd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
-        handle_error("bind");
+	//чтение из соединения
+	void start()
+	{
+		//асинхронное чтение
+		// buffer создаётся на основе массива char
+		//коллбэк, срабатывающий после чтения
 
-    //перевода сокета в режим пассивного ожидания входящих соединений
-    //можно использовать константу SOMAXCON, которая хранит максимально возможную длину очереди подключений для текущей ОС(остальным будет отказано в подключении) 
-    if (listen(sfd, SOMAXCONN) == -1)
-        handle_error("listen");
+		//при вызове bind передается указатель на текущий объект (this)
+		//и аргументы для обработчика, такие как ошибка и количество переданных
+		//байтов
+		sfd.async_read_some(
+		  boost::asio::buffer(data, max_length),
+		  boost::bind(&Session::handle_read,
+					  this,
+					  boost::asio::placeholders::error,
+					  boost::asio::placeholders::bytes_transferred));
+	}
 
-        //буфер для чтнеи/записи данных
-        char Buffer[1024];
+	//коллбэк на чтение
+	void handle_read(const boost::system::error_code& error,
+					 size_t							  bytes_transferred)
+	{
+		//если ошибка
+		if (error)
+			//удаляем сессию
+			delete this;
 
-        std::ofstream logFile;
+		//если всё нормально, записываем в сокет столько байт, сколько пришло и
+		//связываем коллбэк на запись с методом класса
+		boost::asio::async_write(sfd,
+								 boost::asio::buffer(data, bytes_transferred),
+								 boost::bind(&Session::handle_write,
+											 this,
+											 boost::asio::placeholders::error));
+	}
 
-    while(1)
-    {
-        //принятия входящих соединений на сервере; блокируется и ожидает, пока клиент не попытается установить соединение с сервером
-        //принимает: 
-        //  серверный дескриптор
-        //  указатель на структуру адреса клиентского сокета
-        //  указатель на размер структуры адреса клиентского сокета
-        //возвращает:
-        //  новый дескриптор для общения с клиентом; создаётся в неблокируемом режиме
-        int cfd = accept4(sfd, (struct sockaddr *)&peer_addr, &peer_addr_size, SOCK_NONBLOCK);
-        if (cfd == -1)
-            handle_error("accept4");
+	void handle_write(const boost::system::error_code& error)
+	{
+		if (error)
+			delete this;
 
-        //сервер засыпает на 10 секунд для проверки работы таймаута
-        sleep(10);
-        
-        //обнуление буфера
-        memset(Buffer, 0, sizeof(Buffer));
+		//если ошибок нет
+		//вызов асинхронного чтения в буфер и привязывание коллбэка
+		sfd.async_read_some(
+		  boost::asio::buffer(data, max_length),
+		  boost::bind(&Session::handle_read,
+					  this,
+					  boost::asio::placeholders::error,
+					  boost::asio::placeholders::bytes_transferred));
+	}
+};
 
-        //для сокета  в неблокирующем режиме осуществляется проверка в цикле
-        //если данные ещё не пришли(recv == -1)
-        ssize_t numBytes;
-        while ((numBytes = recv(cfd, Buffer, sizeof(Buffer) - 1, MSG_NOSIGNAL)) == -1)
-        {
-             //и errno содержит EAGAIN
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-            {
-                //то спим 20 секунд, затем повторяем итерацию
-                usleep(200000);
-                continue;
-            }
-            else
-                //иначе обработчик ошибок закрывает соединение 
-                handle_error("recv");
-        }
-             
-        // shutdown(cfd, SHUT_RDWR);
-        // close(cfd);
+//класс сервера, обрабатывающий все соединения
+class Server
+{
+private:
 
-        //открытие файла на запись и дозапись после каждого входящего соединения
-        logFile.open("log.txt", std::ios::out | std::ios::app);
-        if (!logFile.is_open())
-            return 1;
+	//ссылка на сервис ввода-вывода
+	boost::asio::io_service& io_service_;
 
-        logFile << Buffer << "\n";
+	//объект для принятия входящих соединений
+	tcp::acceptor acceptor_;
 
-        logFile.close();
-    }
-    return 0;    
+public:
+
+	Server(boost::asio::io_service& io_service, short port)
+		: io_service_(io_service),
+		  acceptor_(io_service, tcp::endpoint(tcp::v4(), port))
+	{
+		//создание новой сессии
+		//принимает сервис ввода-вывода
+		Session* new_session = new Session(io_service_);
+
+		//принимаем соединение, вызываем соответствующий коллбэк, связанный с
+		//методом класса, передавая указатель на сессию и ошибку
+		acceptor_.async_accept(new_session->socket(),
+							   boost::bind(&Server::handle_accept,
+										   this,
+										   new_session,
+										   boost::asio::placeholders::error));
+	}
+
+	~Server() {}
+
+	void handle_accept(Session*							new_session,
+					   const boost::system::error_code& error)
+	{
+		if (error)
+			delete new_session;
+
+		//если ошибки нет, запускаем сессию
+		//указатели на неё не храним, работает сама по себе и при ошибке	
+		//чтения/записи может себя удалить
+		new_session->start();
+
+		//создаём новую сессию
+		new_session = new Session(io_service_);
+
+		//снова запускаем асинхронный приём соединений
+		acceptor_.async_accept(new_session->socket(),
+							   boost::bind(&Server::handle_accept,
+										   this,
+										   new_session,
+										   boost::asio::placeholders::error));
+	}
+};
+
+int main(int argc, char* argv[])
+{
+	boost::asio::io_service io_service;
+
+	//объект сервера
+	//указываем порт как параметр командной строки
+	Server server(io_service, atoi(argv[1]));
+
+	//запуск сервиса ввода-вывода
+	io_service.run();
+
+	return 0;
 }
